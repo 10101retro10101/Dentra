@@ -1,332 +1,258 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Модуль для вычитания одной 3D модели из другой
-Использование:
-  python subtract.py 1 2 output.stl --base-pos 0,0,-17.416 --pattern-pos 0,0,-11.044
-"""
-
-import sys
-import argparse
-import io  # для работы с бинарными данными как с файлом (BytesIO)
-import numpy as np
 import trimesh
+import numpy as np
 import os
+import pymeshlab
+import networkx as nx
+import mapbox_earcut as earcut
 
+# ================= НАСТРОЙКИ (CONFIGURATION) =================
+OUTPUT_DIR = "output_steps"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ============================================================
-# НАСТРОЙКИ ПОДКЛЮЧЕНИЯ К БАЗЕ ДАННЫХ (замени на свои!)
-# ============================================================
-DB_CONFIG = {
-    'dbname': 'mydatabase',      # название базы данных
-    'user': 'myuser',            # пользователь
-    'password': 'mypassword',    # пароль
-    'host': 'localhost',         # хост
-    'port': 5432                 # порт (5432 — стандартный для PostgreSQL)
-}
+# Пути к файлам
+PATH_MODEL_TARGET = r"D:\Dentra\BK\Project_1\UpperJaw_top.stl"  # Целевая форма (после препарирования)
+PATH_MODEL_SOURCE = r"D:\Dentra\BK\Project_1\Teeth.stl"         # Исходная форма (до препарирования)
 
-# SQL-запрос для получения модели по ID
-# Замени 'models' на название твоей таблицы
-# Замени 'model_data' на название колонки с BLOB
-# Замени 'id' на название колонки с идентификатором
-SQL_GET_MODEL = "SELECT model_data, file_type FROM models WHERE id = %s"
+# Параметры капы
+CAP_THICKNESS = 2.0   # мм - толщина стенки капы
+CLEARANCE = 0.05      # мм - технологический зазор для посадки
 
+# Параметры прорезей (шахматный паттерн)
+SLOT_WIDTH = 1.0      # мм - ширина прорези (соответствует диаметру бора)
+SLOT_STEP = 1.0       # мм - шаг между центрами прорезей (1.0 = сплошные линии)
+Y_BRIDGE = 5.0        # мм - ширина боковых мостиков (прочность конструкции)
 
-def get_blob_from_database(model_id):
-    """
-    Достаёт бинарные данные модели и её формат из базы данных по ID
-    model_id - идентификатор модели в БД
-    
-    Возвращает:
-        (blob_data, file_type) - бинарные данные (bytes) и формат файла (str)
-    """
+# Параметры юбки (фиксация)
+SKIRT_ZONE = 3.0      # мм - высота зоны юбки, вырезаемой из цельной капы
+SKIRT_POSITION = 'top'# 'top' - сверху (для верхних зубов), 'bottom' - снизу (для нижних)
+
+# ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
+
+def save_mesh(mesh, filename, step_name=""):
+    filepath = os.path.join(OUTPUT_DIR, filename)
     try:
-        import psycopg2  # библиотека для работы с PostgreSQL
-    except ImportError:
-        raise  # если нет библиотеки — ошибка, дальше нет смысла продолжать
-    
-    conn = psycopg2.connect(**DB_CONFIG)  # подключаемся к БД, ** распаковывает словарь в именованные аргументы
-    cur = conn.cursor()  # создаём курсор для выполнения SQL-запросов
-    
-    cur.execute(SQL_GET_MODEL, (model_id,))  # передаём id как кортеж, защита от SQL-инъекций
-    row = cur.fetchone()  # получаем первую строку результата запроса
-    
-    cur.close()  # закрываем курсор
-    conn.close()  # закрываем соединение с БД
-    
-    if row is None:  # если запрос ничего не вернул — модель с таким ID не существует
-        raise ValueError(f"Модель с ID={model_id} не найдена в базе данных")
-    
-    blob_data = row[0]  # бинарные данные модели (колонка model_data)
-    file_type = row[1] if len(row) > 1 else 'stl'  # формат файла (колонка file_type), если колонки нет — stl по умолчанию
-    
-    return blob_data, file_type  # возвращаем бинарные данные и формат файла
+        mesh.export(filepath)
+        if step_name: print(f"✅ {step_name} -> {filename}")
+        return mesh
+    except Exception as e:
+        print(f"❌ Ошибка сохранения {filename}: {e}")
+        return None
 
+def check_coordinates(mesh, name, original_bounds=None):
+    bounds = mesh.bounds
+    if original_bounds is not None:
+        diff = np.abs(bounds - original_bounds).max()
+        status = "✓" if diff < 0.01 else ""
+        print(f"   {status} {name}: отклонение {diff:.4f} мм")
 
-def load_mesh_from_source(source, file_type=None):
-    """
-    Загружает меш из строки (путь к файлу) или из bytes (blob из БД)
-    source - путь к файлу (str) или бинарные данные (bytes)
-    file_type - формат файла ('stl', 'obj'), нужно указывать для bytes
-    """
+def repair_mesh_with_pymeshlab(mesh, name):
+    print(f"🔧 Ремонт: {name}")
+    original_bounds = mesh.bounds.copy()
+    ms = pymeshlab.MeshSet()
+    ms.add_mesh(pymeshlab.Mesh(vertex_matrix=mesh.vertices, face_matrix=mesh.faces))
     
-    # Если передали путь к файлу (str) — загружаем как обычно
-    #if isinstance(source, str):
-    #    mesh = trimesh.load(source, force='mesh')  # гарантировано получаем объект mesh а не сцену
+    try: ms.apply_filter('meshing_merge_close_vertices', threshold=pymeshlab.AbsoluteValue(0.0001))
+    except: pass
+    try:
+        ms.apply_filter('meshing_remove_duplicate_faces')
+        ms.apply_filter('meshing_remove_null_faces')
+        ms.apply_filter('meshing_remove_duplicate_vertices')
+    except: pass
+    try:
+        ms.apply_filter('meshing_repair_non_manifold_edges')
+        ms.apply_filter('meshing_repair_non_manifold_vertices')
+    except: pass
+    try: ms.apply_filter('meshing_close_holes', maxholesize=100)
+    except: pass
     
-    # Если передали бинарные данные (bytes) — оборачиваем в BytesIO чтобы trimesh мог прочитать
-    if isinstance(source, bytes):
-        file_obj = io.BytesIO(source)  # создаём file-like объект в памяти из байтов, чтобы trimesh думал что читает файл
-        if file_type:
-            mesh = trimesh.load(file_obj, file_type=file_type, force='mesh')  # указываем формат, потому что у BytesIO нет расширения файла
-        else:
-            mesh = trimesh.load(file_obj, force='mesh')  # если формат не указан — trimesh попытается угадать сам
-    
-    return mesh
+    result = trimesh.Trimesh(vertices=ms.current_mesh().vertex_matrix(), faces=ms.current_mesh().face_matrix())
+    result.fix_normals()
+    ms.clear()
+    check_coordinates(result, f"{name} (после ремонта)", original_bounds)
+    return result
 
+def solidify_open_mesh(mesh, name, base_z=None):
+    """Закрывает большие открытые края через boundary + earcut."""
+    if mesh.is_watertight: return mesh
+    original_bounds = mesh.bounds.copy()
+    
+    edges = mesh.edges_sorted
+    edge_counts = {}
+    for edge in edges:
+        key = tuple(edge)
+        edge_counts[key] = edge_counts.get(key, 0) + 1
+    boundary_edges = [np.array(k) for k, count in edge_counts.items() if count % 2 != 0]
+    if not boundary_edges: return mesh
+    
+    g = nx.Graph()
+    g.add_edges_from(boundary_edges)
+    cycles = nx.cycle_basis(g)
+    if not cycles: return mesh
+    
+    boundary_indices = max(cycles, key=len)
+    num_b_verts = len(boundary_indices)
+    
+    boundary_z = mesh.vertices[boundary_indices, 2]
+    avg_boundary_z = np.mean(boundary_z)
+    min_z, max_z = mesh.vertices[:, 2].min(), mesh.vertices[:, 2].max()
+    mid_z = (min_z + max_z) / 2
+    
+    jaw_type = 'upper' if avg_boundary_z > mid_z else 'lower'
+    cap_z = (max_z if base_z is None else base_z) if jaw_type == 'upper' else (min_z if base_z is None else base_z)
+    
+    new_vertices = mesh.vertices.copy()
+    new_faces = list(mesh.faces.copy())
+    start_idx = len(new_vertices)
+    
+    boundary_vertices = mesh.vertices[boundary_indices].copy()
+    cap_vertices = boundary_vertices.copy()
+    cap_vertices[:, 2] = cap_z
+    new_vertices = np.vstack([new_vertices, cap_vertices])
+    
+    for i in range(num_b_verts):
+        next_i = (i + 1) % num_b_verts
+        v_tc, v_tn = boundary_indices[i], boundary_indices[next_i]
+        v_bc, v_bn = start_idx + i, start_idx + next_i
+        if v_tc != v_bc or v_tn != v_bn:
+            if jaw_type == 'lower':
+                new_faces.extend([[v_tc, v_bc, v_bn], [v_tc, v_bn, v_tn]])
+            else:
+                new_faces.extend([[v_tc, v_bn, v_bc], [v_tc, v_tn, v_bn]])
+    
+    cap_2d = cap_vertices[:, :2]
+    cap_faces_2d = earcut.triangulate_float64(cap_2d, np.array([len(cap_2d)], dtype=np.int32)).reshape(-1, 3)
+    if jaw_type == 'upper': cap_faces_2d = cap_faces_2d[:, ::-1]
+    new_faces.extend(cap_faces_2d + start_idx)
+    
+    solid_mesh = trimesh.Trimesh(vertices=new_vertices, faces=np.array(new_faces, dtype=np.int64))
+    solid_mesh.fix_normals()
+    check_coordinates(solid_mesh, f"{name} (solidify)", original_bounds)
+    return solid_mesh
 
-def apply_transform(mesh, pos, rot):
-    """
-    Применяет позицию и вращение к мешу
-    mesh - объект trimesh.Trimesh
-    pos - позиция [x,y,z]
-    rot - вращение [rx, ry, rz]
-    """
+def add_skirt_by_copying(cap_with_slots, original_base_cap, skirt_zone=3.0, position='top'):
+    """Создаёт юбку путём вырезания части цельной капы и объединения."""
+    bounds = cap_with_slots.bounds
+    z_min, z_max = bounds[0][2], bounds[1][2]
     
-    m = mesh.copy() # копируем чтобы изменения не отразились на оригинале 
-    rot_rad = np.radians(rot) # переводим градусы в радианы, возвращает [rx, ry, rz], но в радианах 
+    cut_z_min = z_max - skirt_zone if position == 'top' else z_min - 5
+    cut_z_max = z_max + 5 if position == 'top' else z_min + skirt_zone
     
-    # Матриа поворота, когда двигаем по одной оси, одна ось не изменяется, а остальные изменяются 
-    Rx = np.array([
-        [1, 0, 0],
-        [0, np.cos(rot_rad[0]), -np.sin(rot_rad[0])],
-        [0, np.sin(rot_rad[0]), np.cos(rot_rad[0])]
-    ])
-    
-    Ry = np.array([
-        [np.cos(rot_rad[1]), 0, np.sin(rot_rad[1])],
-        [0, 1, 0],
-        [-np.sin(rot_rad[1]), 0, np.cos(rot_rad[1])]
-    ])
-    
-    Rz = np.array([
-        [np.cos(rot_rad[2]), -np.sin(rot_rad[2]), 0],
-        [np.sin(rot_rad[2]), np.cos(rot_rad[2]), 0],
-        [0, 0, 1]
-    ])
-    
-    R = Rz @ Ry @ Rx #Умножение матриы c право на лево сначало rx-ry-rz, чтобы получить 1 матрицу 
-    
-    m.vertices = m.vertices @ R.T #Переводим координаты в нормальный вид из матриц в вектор [x,y,z]
-
-    m.vertices += pos #добавляем к нашим координатам перемещение 
-    
-    return m
-
-
-def make_watertight(mesh):
-    """
-    Делает меш водонепроницаемым для булевых операций
-    mesh - объект trimesh.Trimesh
-    """
-    m = mesh.copy()# копируем mesh
-    m.merge_vertices()# сливаем вершины которые находятся очень близко, но между ними есть разрывы
-    m.remove_unreferenced_vertices()# удаляем мертвые вершины 
+    cutter_size = [bounds[1][0]-bounds[0][0]+30, bounds[1][1]-bounds[0][1]+30, cut_z_max-cut_z_min+10]
+    cutter = trimesh.creation.box(extents=cutter_size)
+    cutter.apply_transform(trimesh.transformations.translation_matrix([
+        (bounds[0][0]+bounds[1][0])/2, (bounds[0][1]+bounds[1][1])/2, (cut_z_min+cut_z_max)/2
+    ]))
     
     try:
-        m.fix_normals() #: Пытаемся автоматически вывернуть все нормали наружу
+        skirt_piece = trimesh.boolean.intersection([original_base_cap, cutter], engine='manifold')
     except:
-        pass
-    
-    if m.is_watertight: # проверяем водонепрониыемый ли модель после изменений 
-        return m
+        try: skirt_piece = trimesh.boolean.intersection([original_base_cap, cutter], engine='blender')
+        except: return cap_with_slots
     
     try:
-        m.fill_holes() # заклеиваем дырки если они есть 
+        return trimesh.boolean.union([cap_with_slots, skirt_piece], engine='manifold')
     except:
-        pass
-    
-    if m.is_watertight: # проверяем ещё раз после заклеивания дырок
-        return m
-    
-    # Разбиваем на компоненты и берём самую большую
+        try: return trimesh.boolean.union([cap_with_slots, skirt_piece], engine='blender')
+        except: return trimesh.util.concatenate([cap_with_slots, skirt_piece])
+
+# ================= ГЛАВНЫЙ ЦИКЛ =================
+print("🚀 Генерация хирургического шаблона")
+
+# --- ЭТАП 1: Загрузка и ремонт ---
+try:
+    raw_1 = trimesh.load(PATH_MODEL_TARGET, force='mesh')
+    bounds_1_orig = raw_1.bounds.copy()
+    solid_1 = solidify_open_mesh(repair_mesh_with_pymeshlab(raw_1, "Model_1"), "Model_1")
+    save_mesh(solid_1, "01_solid_model_1.stl", "Solid Model_1")
+
+    raw_2 = trimesh.load(PATH_MODEL_SOURCE, force='mesh')
+    bounds_2_orig = raw_2.bounds.copy()
+    repaired_2 = repair_mesh_with_pymeshlab(raw_2, "Model_2")
+    solid_2 = solid_2 = repaired_2 if repaired_2.is_watertight else solidify_open_mesh(repaired_2, "Model_2")
+    save_mesh(solid_2, "02_solid_model_2.stl", "Solid Model_2")
+except Exception as e:
+    print(f"❌ Ошибка загрузки/ремонта: {e}"); exit()
+
+# --- ЭТАП 2: Объем редукции ---
+try:
+    volume_to_remove = trimesh.boolean.difference([solid_2, solid_1], engine='manifold')
+    volume_to_remove.visual.vertex_colors = [255, 165, 0, 255]
+    save_mesh(volume_to_remove, "03_volume_to_remove.stl", "Volume to remove")
+except Exception as e:
+    print(f"❌ Ошибка вычисления объема: {e}"); exit()
+
+# --- ЭТАП 3: Базовая капа ---
+inner = repaired_2.copy()
+inner.vertices += inner.vertex_normals * CLEARANCE
+outer = repaired_2.copy()
+outer.vertices += outer.vertex_normals * (CLEARANCE + CAP_THICKNESS)
+
+try:
+    base_cap = trimesh.boolean.difference([outer, inner], engine='manifold')
+except:
+    try: base_cap = trimesh.boolean.difference([outer, inner], engine='blender')
+    except: base_cap = outer.copy()
+
+base_cap.visual.vertex_colors = [0, 0, 255, 255]
+save_mesh(base_cap, "04_base_cap.stl", "Base Cap")
+
+# --- ЭТАП 4: Шахматные прорези ---
+bounds = volume_to_remove.bounds
+x_min, x_max = bounds[0][0], bounds[1][0]
+y_min, y_max = bounds[0][1], bounds[1][1]
+z_min, z_max = bounds[0][2], bounds[1][2]
+slot_height = (z_max - z_min) + 10
+slot_y_size = (y_max - y_min) + Y_BRIDGE
+
+slot_boxes_1, slot_boxes_2 = [], []
+for idx, x_pos in enumerate(np.arange(x_min, x_max, SLOT_STEP)):
+    box = trimesh.creation.box(extents=[SLOT_WIDTH, slot_y_size, slot_height])
+    box.apply_transform(trimesh.transformations.translation_matrix([x_pos + SLOT_WIDTH/2, (y_min+y_max)/2, (z_min+z_max)/2]))
     try:
-        parts = m.split(only_watertight=False)
-        if len(parts) > 1:
-            m = max(parts, key=lambda x: len(x.faces))
-            try:
-                m.fill_holes()
-            except:
-                pass
-    except:
-        pass
-    
-    if m.is_watertight: # проверяем после разделения на компоненты
-        return m
-    
-    # Последний шанс
-    #m = m.convex_hull  # строим выпуклую оболочку, она всегда watertight, но теряются вогнутые детали
-    
-    return m
+        if trimesh.boolean.intersection([box, volume_to_remove], engine='manifold').volume > 0.1:
+            (slot_boxes_1 if idx % 2 == 0 else slot_boxes_2).append(box)
+    except: pass
 
+mask_1 = trimesh.util.concatenate(slot_boxes_1) if slot_boxes_1 else trimesh.creation.box(extents=[1,1,1])
+mask_2 = trimesh.util.concatenate(slot_boxes_2) if slot_boxes_2 else trimesh.creation.box(extents=[1,1,1])
+save_mesh(mask_1, "04a_mask_1.stl", "Mask 1")
+save_mesh(mask_2, "04b_mask_2.stl", "Mask 2")
 
-def subtract_models(base_source, pattern_source, output_path,
-                    base_pos=(0, 0, 0), base_rot=(0, 0, 0),
-                    pattern_pos=(0, 0, 0), pattern_rot=(0, 0, 0),
-                    base_file_type=None, pattern_file_type=None):
-    """
-    Вычитает base из pattern (Pattern - Base) и сохраняет результат
-        base_source - путь к базовой модели str или бинарные данные bytes (что вычитаем)
-        pattern_source - путь ко второй модели str или бинарные данные bytes (из чего вычитаем)
-        output_path - путь для сохранения результата
-        base_pos - позиция base (x, y, z)
-        base_rot - вращение base (x, y, z) в градусах
-        pattern_pos - позиция pattern (x, y, z)
-        pattern_rot - вращение pattern (x, y, z) в градусах
-        base_file_type - формат файла для base ('stl', 'obj'), указывать если base_source это bytes
-        pattern_file_type - формат файла для pattern ('stl', 'obj'), указывать если pattern_source это bytes
-    """
-    
-    try:
-        # Загрузка моделей
-        base = load_mesh_from_source(base_source, base_file_type)  # загружаем из файла или из bytes
-        base.merge_vertices()# сливаем вершины которые находятся очень близко, но между ними есть разрывы
-        base.remove_unreferenced_vertices()# удаляем мертвые вершины 
-        #base = apply_transform(base, np.array(base_pos), np.array(base_rot))#дополнительные координаты если хотим передать 
-        
-        pattern = load_mesh_from_source(pattern_source, pattern_file_type)  # загружаем из файла или из bytes
-        pattern.merge_vertices()# сливаем вершины которые находятся очень близко, но между ними есть разрывы
-        pattern.remove_unreferenced_vertices()# удаляем мертвые вершины 
-        #pattern = apply_transform(pattern, np.array(pattern_pos), np.array(pattern_rot))#дополнительные координаты если хотим передать 
-        
-        # Подготовка
-        base_ready = make_watertight(base)#делаем mesh замкнутым
-        pattern_ready = make_watertight(pattern)#делаем mesh замкнутым
-        
-        # Вычитание
-        result = None# если вычитание не сработает передадим None
-        
-        # Пробуем manifold3d
-        #try:
-        #    import manifold3d
-        #    result = pattern_ready.difference(base_ready, engine='manifold')#вычитание из pattern вычти base
-        #except ImportError:
-        #    pass  # библиотека не установлена, пробуем дальше
-        #except Exception:
-        #    pass  # другая ошибка, пробуем дальше
-        
-        # Fallback
-        if result is None or result.is_empty:  # если manifold3d не сработал или дал пустой результат
-            for engine in ['scad', 'blender']:  # перебираем запасные движки
-                try:
-                    result = pattern_ready.difference(base_ready, engine=engine)  # пробуем вычитание с другим движком
-                    if result is not None and not result.is_empty and len(result.faces) > 0: #проверяем что результат не пустой
-                        break  # нашли работающий движок, выходим из цикла
-                except:
-                    continue  # движок упал, пробуем следующий
-        
-        if result is None or result.is_empty:  # если ни один движок не дал результат
-            return False
-        
-        # Очистка результата
-        result.merge_vertices()#удаляем дубликаты 
-        result.remove_unreferenced_vertices()#удаяляем мёртвые грани 
-        #try:
-        #    result.fix_normals()# Пытаемся автоматически вывернуть все нормали наружу
-        #except:
-        #    pass
-        
-        # Сохранение
-        #os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)#создаём папку если её нет, '.' если путь без папки
-        #result.export(output_path)#записываем даные
-        
-        return True
-        
-    except FileNotFoundError:
-        return False  # файл не найден
-    except Exception:
-        import traceback
-        traceback.print_exc()  # выводим полный стек ошибки для отладки
-        return False
+# --- ЭТАП 5: Depth Stop ---
+try:
+    space_to_drill = trimesh.boolean.difference([base_cap, solid_1], engine='manifold')
+except: space_to_drill = base_cap.copy()
 
+try:
+    drill_1 = trimesh.boolean.intersection([mask_1, space_to_drill], engine='manifold')
+    drill_2 = trimesh.boolean.intersection([mask_2, space_to_drill], engine='manifold')
+    save_mesh(drill_1, "05_drill_1.stl", "Drill 1")
+    save_mesh(drill_2, "05_drill_2.stl", "Drill 2")
+except Exception as e:
+    print(f"❌ Ошибка Depth Stop: {e}"); exit()
 
-def parse_vec3(s):
-    """Парсит строку 'x,y,z' в список float"""
-    return [float(v) for v in s.split(',')]  # разбиваем строку по запятым и каждую часть в float
+# --- ЭТАП 6: Капы с прорезями ---
+try:
+    cap_1 = trimesh.boolean.difference([space_to_drill, drill_1], engine='manifold')
+    cap_2 = trimesh.boolean.difference([space_to_drill, drill_2], engine='manifold')
+except Exception as e:
+    print(f"❌ Ошибка формирования кап: {e}"); exit()
 
+# --- ЭТАП 7: Юбка через копирование ---
+cap_1 = add_skirt_by_copying(cap_1, base_cap, SKIRT_ZONE, SKIRT_POSITION)
+cap_2 = add_skirt_by_copying(cap_2, base_cap, SKIRT_ZONE, SKIRT_POSITION)
 
-def parse_int_or_path(s):
-    """
-    Парсит аргумент: если число — возвращает int (ID для Blob), иначе строку (путь к файлу)
-    s - строка из командной строки
-    """
-    try:
-        return int(s)  # пробуем превратить в число (ID модели в БД)
-    except ValueError:
-        return s  # не число — значит путь к файлу
+# --- ЭТАП 8: Финальное вычитание (посадочная поверхность) ---
+try:
+    final_1 = trimesh.boolean.difference([cap_1, solid_1], engine='manifold')
+    final_2 = trimesh.boolean.difference([cap_2, solid_1], engine='manifold')
+except:
+    final_1, final_2 = cap_1, cap_2
 
+final_1.visual.vertex_colors = [0, 255, 255, 255]
+final_2.visual.vertex_colors = [255, 0, 255, 255]
+save_mesh(final_1, "06_FINAL_Cap_Step_1.stl", "FINAL Cap 1")
+save_mesh(final_2, "07_FINAL_Cap_Step_2.stl", "FINAL Cap 2")
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Вычитание одной 3D модели из другой",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Примеры:
-  python subtract.py 1 2 output.stl --base-pos 0,0,-17.416 --pattern-pos 0,0,-11.044
-        """
-    )
-    
-    parser.add_argument("base", type=parse_int_or_path, 
-                        help="Путь к базовой модели (str) или ID модели в БД (int)")
-    parser.add_argument("pattern", type=parse_int_or_path,
-                        help="Путь ко второй модели (str) или ID модели в БД (int)")
-    parser.add_argument("output", help="Путь для сохранения результата (.stl)")
-    
-    parser.add_argument("--base-pos", type=parse_vec3, default=[0, 0, 0],
-                        help="Позиция base: x,y,z (по умолчанию: 0,0,0)")
-    parser.add_argument("--base-rot", type=parse_vec3, default=[0, 0, 0],
-                        help="Вращение base в градусах: x,y,z (по умолчанию: 0,0,0)")
-    parser.add_argument("--pattern-pos", type=parse_vec3, default=[0, 0, 0],
-                        help="Позиция pattern: x,y,z (по умолчанию: 0,0,0)")
-    parser.add_argument("--pattern-rot", type=parse_vec3, default=[0, 0, 0],
-                        help="Вращение pattern в градусах: x,y,z (по умолчанию: 0,0,0)")
-    
-    args = parser.parse_args()  # парсим аргументы командной строки
-    
-    # ============================================================
-    # РЕЖИМ ЗАГРУЗКИ: Blob (из БД) или Файлы (с диска)
-    # Раскомментируй нужный блок, второй закомментируй
-    # ============================================================
-    
-    # --- РЕЖИМ BLOB: загрузка из базы данных по ID ---
-    # Передаём ID моделей: python subtract.py 1 2 output.stl
-    base_blob, base_ft = get_blob_from_database(args.base)  # args.base — это число (ID), получаем bytes и формат
-    pattern_blob, pattern_ft = get_blob_from_database(args.pattern)  # args.pattern — это число (ID), получаем bytes и формат
-    
-    success = subtract_models(
-        base_source=base_blob,            # ← bytes из БД
-        pattern_source=pattern_blob,      # ← bytes из БД
-        output_path=args.output,
-        base_pos=args.base_pos,
-        base_rot=args.base_rot,
-        pattern_pos=args.pattern_pos,
-        pattern_rot=args.pattern_rot,
-        base_file_type=base_ft,           # ← формат из БД ('stl', 'obj'...)
-        pattern_file_type=pattern_ft      # ← формат из БД ('stl', 'obj'...)
-    )
-    
-    # --- РЕЖИМ ФАЙЛЫ: загрузка с диска по пути ---
-    # Раскомментируй этот блок и закомментируй блок выше чтобы читать из файлов
-    # Передаём пути: python subtract.py base.stl pattern.stl output.stl
-    #success = subtract_models(
-    #    base_source=args.base,       # ← путь к файлу (str)
-    #    pattern_source=args.pattern, # ← путь к файлу (str)
-    #    output_path=args.output,
-    #    base_pos=args.base_pos,
-    #    base_rot=args.base_rot,
-    #    pattern_pos=args.pattern_pos,
-    #    pattern_rot=args.pattern_rot
-    #    # file_type не передаём — trimesh сам определит формат по расширению
-    #)
-    
-    sys.exit(0 if success else 1)  # выходим с кодом 0 если успех, 1 если ошибка
+print("="*50)
+print("✅ Генерация завершена. Файлы в:", OUTPUT_DIR)
