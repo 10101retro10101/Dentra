@@ -117,10 +117,11 @@ def solidify_jaw_top(input_path, output_path, cap_z=None):
           f"Z[{solid_mesh.vertices[:, 2].min():.2f}:{solid_mesh.vertices[:, 2].max():.2f}]")
 
     solid_mesh.export(output_path)
+    print(f"Solid Model_1 watertight? {solid_mesh.is_watertight}")
     print(f"\n✓ Сохранено в: {output_path}")
 
-input_file = r"D:\Dentra\BK\Project_1\UpperJaw.stl"
-output_file = r"D:\Dentra\BK\Project_1\UpperJaw_top.stl"
+input_file = r'/Users/retro/Documents/Project 1/UpperJaw.stl'
+output_file = r"./good.stl"
 
 if __name__ == "__main__":
     solidify_jaw_top(input_file, output_file)

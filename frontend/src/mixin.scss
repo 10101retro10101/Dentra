@@ -1,0 +1,63 @@
+//block
+@mixin block_default(){
+    display: block;
+    justify-content: unset;
+    align-items: unset;
+    align-content: unset;
+}
+@mixin block_center(){
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    align-content: center;
+}
+@mixin block_center_column(){
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+//text
+@mixin font(){
+    font-family: "JetBrains Mono", monospace;
+}
+@mixin text_80(){
+    @include font();
+    font-size: 80px;
+}
+@mixin text_60(){
+    @include font();
+    font-size: 60px;
+}
+@mixin text_40(){
+    @include font();
+    font-size: 40px;
+}
+@mixin text_32(){
+    @include font();
+    font-size: 32px;
+}
+@mixin text_24(){
+    @include font();
+    font-size: 24px;
+}
+@mixin text_20(){
+    @include font();
+    font-size: 20px;
+}
+@mixin text_16(){
+    @include font();
+    font-size: 16px;
+}
+@mixin text_12(){
+    @include font();
+    font-size: 12px;
+}
+
+//colors
+$grey_light: #B0C4D4;
+$grey_dark: #3D4B5E;
+$milk: #F7F3E8;
+$brown: #C9A996;
+$white: #FDFCF8

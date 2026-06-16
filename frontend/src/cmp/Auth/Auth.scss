@@ -1,0 +1,51 @@
+@use "../../mixin.scss" as mx;
+
+.auth{
+    width: 600px;
+    @include mx.block_center_column();
+    gap: 42px;
+    
+    .logo_name{
+        padding: 16px 52px;
+        border-radius: 200px;
+        p{
+            @include mx.text_60();
+            color: mx.$grey_dark;
+        }
+    }
+    .form_field{
+        width: 600px;
+        padding: 36px;
+        border-radius: 56px;
+        @include mx.block_center_column();
+        gap: 32px;
+        .top{
+            text-align: center;
+            @include mx.text_24();
+            color: mx.$grey_dark;
+        }
+        input[type=text]{
+            width: 100%;
+            border: none;
+            padding: 10px;
+            @include mx.text_24();
+            color: mx.$grey_dark;
+            border-radius: 200px;
+            text-align: center;
+            &:focus{outline: none;}
+        }
+        .enter{
+            padding: 8px 24px;
+            background-color: mx.$grey_dark;
+            border-radius: 200px;
+            @include mx.text_20();
+            color: mx.$white;
+            transition-duration: .4s;
+            &:hover{
+                cursor: pointer;
+                background-color: mx.$grey_light;
+                color: mx.$grey_dark;
+            }
+        }
+    }
+}

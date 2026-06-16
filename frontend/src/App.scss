@@ -1,0 +1,36 @@
+@use "./mixin.scss" as mx;
+
+body{
+  margin: 0;
+  padding: 0;
+  *, &::before, &::after{box-sizing: border-box;}
+  button{
+    border: none;
+    padding: 0;
+    margin: 0;
+  }
+  h1,h2,h3,h4, p{margin: 0;}
+  ul{padding: 0; margin: 0; list-style-type: none;}
+  .App{
+    width: 100%;
+    height: 100vh;
+    background-color: mx.$milk;
+    background-image: url("./background.png");
+    background-size: 115% 115%; 
+    background-position: var(--bg-x, 50%) var(--bg-y, 50%);
+    background-repeat: no-repeat;
+    
+    /* Опционально: небольшая плавность, чтобы движение не было дёрганым */
+    transition: background-position 0.15s ease-out;
+    @include mx.block_center();
+
+    .glass{
+      overflow: clip;
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(2px);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+    }
+    .shadow{box-shadow: 5px 5px 10px 0 rgba(0, 0, 0, 0.25);}
+  }
+}

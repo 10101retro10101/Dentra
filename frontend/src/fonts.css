@@ -1,0 +1,31 @@
+/* src/fonts.css */
+
+/* Regular 400 */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+}
+
+/* Bold 700 */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./fonts/jetbrains-mono-latin-700-normal.woff2') format('woff2');
+}
+
+/* Italic 400 */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./fonts/jetbrains-mono-latin-400-italic.woff2') format('woff2');
+}
+
+/* Применяем шрифт */
+body {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Если хочешь чтобы везде был этот шрифт */
+* {
+  font-family: 'JetBrains Mono', monospace;
+}

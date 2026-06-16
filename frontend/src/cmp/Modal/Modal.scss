@@ -1,0 +1,20 @@
+@use "../../mixin.scss" as mx;
+
+.modal{
+    position: absolute;
+    top: 30px;
+    overflow: clip;
+    padding: 16px 24px;
+    border-radius: 36px;
+    @include mx.block_center();
+    gap: 24px;
+    transition-duration: .1s;
+    img{width: 60px; height: 60px;}
+    .title{
+        // width: 420px;
+        @include mx.text_20();
+        color: mx.$grey_dark;
+    }
+    &.active .title{max-width: 400px;}
+    &.disactive{max-height: 0; padding: 0; border: none!important;}
+}

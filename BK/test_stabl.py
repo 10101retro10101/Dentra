@@ -116,8 +116,8 @@ def solidify_jaw(input_path, output_path, base_z=None):
     solid_mesh.export(output_path)
     print(f"\n✓ Сохранено в: {output_path}")
 
-input_file = r"D:\Dentra\BK\Project_1\LowerJaw.stl"
-output_file = r"D:\Dentra\BK\Project_1\LowerJaw_solid.stl"
+input_file = r'/Users/retro/Documents/Project 1/UpperJaw.stl'
+output_file = r"./good.stl"
 
 if __name__ == "__main__":
     solidify_jaw(input_file, output_file)

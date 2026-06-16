@@ -1,0 +1,79 @@
+@use "../../../mixin.scss" as mx;
+
+.library{
+    z-index: 10;
+    position: absolute;
+    top: 50%;
+    left: 0;
+    translate: 0 -50%;
+    width: 100%;
+    height: 100vh;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition-duration: .4s;
+    @include mx.block_center();
+    &.active{max-height: 1000px; opacity: 1;}
+    .lib_bg{
+        position: absolute;
+        z-index: 11;
+        width: 100%;
+        height: 100%;
+    }
+    .library_main{
+        z-index: 12;
+        padding: 20px;
+        @include mx.block_center_column();
+        align-items: flex-end;
+        .close{
+            position: relative;
+            width: 40px;
+            height: 40px;
+            background-color: #D12419;
+            border-radius: 8px;
+            @include mx.block_center();
+            transition-duration: .4s;
+            &::before, &::after{
+                position: absolute;
+                display: block;
+                content: "";
+                width: 4px;
+                height: 30px;
+                background-color: mx.$white;
+                border-radius: 100px;
+                rotate: 45deg;
+            }
+            &::after{rotate: -45deg;}
+            &:hover{cursor: pointer; scale: 0.95;}
+        }
+        .drills{
+            margin: 8px 0 0 0;
+            width: 800px;
+            @include mx.block_center();
+            align-items: stretch;
+            gap: 16px;
+            li{
+                padding: 16px;
+                width: calc((100% - 16px) / 2);
+                border-radius: 24px;
+                @include mx.block_center_column();
+                gap: 20px;
+                transition-duration: .4s;
+                img{width: 100%; border-radius: 14px};
+                .text_section{
+                    width: calc(100%);
+                    @include mx.block_center();
+                    gap: 16px;
+                    justify-content: space-between;
+                    p{
+                        width: calc((100% - 16px) / 2);
+                        &.name{width: 100%;}
+                        @include mx.text_20();
+                        color: mx.$grey_dark;
+                    }
+                }
+                &:hover{scale: 0.95; cursor: pointer; background-color: mx.$milk;}
+            }
+        }
+    }
+}

@@ -10,8 +10,8 @@ OUTPUT_DIR = "output_steps"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Пути к файлам
-PATH_MODEL_TARGET = r"D:\Dentra\BK\Project_1\UpperJaw_top.stl"  # Целевая форма (после препарирования)
-PATH_MODEL_SOURCE = r"D:\Dentra\BK\Project_1\Teeth.stl"         # Исходная форма (до препарирования)
+PATH_MODEL_TARGET = r'/Users/retro/Documents/Project 1/UpperJaw_top.stl'  # Целевая форма (после препарирования)
+PATH_MODEL_SOURCE = r'/Users/retro/Documents/Project 1/Teeth.stl'        # Исходная форма (до препарирования)
 
 # Параметры капы
 CAP_THICKNESS = 2.0   # мм - толщина стенки капы
