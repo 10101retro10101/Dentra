@@ -15,7 +15,7 @@ import Main from "./cmp/Main/Main";
 const App = (props) => {
   //state
   const app_ref = useRef(null);
-  const [is_auth, setAuth] = useState(false)
+  const [is_auth, setAuth] = useState(true)
 
   //handlers
   useEffect(() => {

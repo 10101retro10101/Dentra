@@ -477,23 +477,14 @@ def subtract_from_blobs(
     # ЭТАП 5: Depth Stop (пространство для сверления)
     print("\n--- ЭТАП 5: Depth Stop ---")
     
-    # Пространство для сверления = base_cap - solid_model_1
     try:
-        space_to_drill = trimesh.boolean.difference([base_cap, solid_model_1], engine='manifold')
-        save_mesh(space_to_drill, "05c_space_to_drill.stl", "Пространство сверления")
+        space_to_drill = trimesh.boolean.difference([base_cap, solid_1], engine='manifold')
     except:
         space_to_drill = base_cap.copy()
-    
-    # Пересечение масок с space_to_drill = реальные прорези
-    try:
-        drill_1 = trimesh.boolean.intersection([mask_1, space_to_drill], engine='manifold')
-        drill_2 = trimesh.boolean.intersection([mask_2, space_to_drill], engine='manifold')
-        print(f"drill_1: {drill_1.volume:.2f} мм³, drill_2: {drill_2.volume:.2f} мм³")
-        save_mesh(drill_1, "05d_drill_1.stl", "Прорези 1")
-        save_mesh(drill_2, "05e_drill_2.stl", "Прорези 2")
-    except Exception as e:
-        print(f"Ошибка: {e}")
-        return None, None
+    drill_1 = mask_1   ######################################
+    drill_2 = mask_2   # ######################################
+    save_mesh(drill_1, "05_drill_1.stl", "Drill 1 (Mask)")
+    save_mesh(drill_2, "05_drill_2.stl", "Drill 2 (Mask)")
     
     # ЭТАП 6: Создание кап с прорезями
     print("\n--- ЭТАП 6: Формирование кап ---")
